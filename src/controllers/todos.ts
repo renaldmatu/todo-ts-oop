@@ -1,66 +1,127 @@
 import { type Request, type Response, type NextFunction } from 'express'
-import { Todo } from '../models/todo.js'
+import { type ResultSetHeader, type RowDataPacket } from 'mysql2'
+import { pool } from '../db.js'
 
 export class TodoController {
-  private todos: Todo[] = []
+  // 1. Kõikide ülesannete lugemine
+  getTodos = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [rows] = await pool.query<RowDataPacket[]>('SELECT * FROM todos')
+      res.status(200).json({ todos: rows })
+    } catch (error) {
+      console.error(error)
+      res.status(500).json({ message: 'Andmebaasi viga ülesannete lugemisel' })
+    }
+  }
 
-  createTodo = (req: Request, res: Response, next: NextFunction) => {
+  // 2. Ühe ülesande lugemine ID järgi
+  getTodoById = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const todoId = req.params.id
+      const [rows] = await pool.query<RowDataPacket[]>('SELECT * FROM todos WHERE id = ?', [todoId])
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: 'Sellise ID-ga ülesannet ei leitud' })
+      }
+
+      res.status(200).json({ todo: rows[0] })
+    } catch (error) {
+      console.error(error)
+      res.status(500).json({ message: 'Andmebaasi viga ülesande lugemisel' })
+    }
+  }
+
+  // 3. Uue ülesande lisamine
+  createTodo = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const task = (req.body as { task: string }).task
-      const newTodo = new Todo(Math.random().toString(), task)
-      this.todos.push(newTodo)
+      if (!task) {
+        return res.status(400).json({ message: 'Väli "task" on kohustuslik' })
+      }
+
+      const [result] = await pool.query<ResultSetHeader>(
+        'INSERT INTO todos (task) VALUES (?)',
+        [task]
+      )
 
       res.status(201).json({
         message: 'Created new todo',
-        createdTask: newTodo
+        createdTask: {
+          id: result.insertId,
+          task: task
+        }
       })
     } catch (error) {
-      console.log(error)
+      console.error(error)
+      res.status(500).json({ message: 'Andmebaasi viga ülesande lisamisel' })
     }
   }
 
-  getTodos = (req: Request, res: Response, next: NextFunction) => {
-    res.json({ todos: this.todos })
-  }
-
-  updateTodo = (req: Request, res: Response, next: NextFunction) => {
+  // 4. Ülesande muutmine
+  updateTodo = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const todoId = req.params.id as string
+      const todoId = req.params.id
       const updatedTask = (req.body as { task: string }).task
-      const todoIndex = this.todos.findIndex(todo => todo.id === todoId)
 
-      if (todoIndex < 0) {
-        throw new Error('Could not find todo with such id')
+      if (!updatedTask) {
+        return res.status(400).json({ message: 'Väli "task" on kohustuslik' })
       }
 
-      const updatedTodo = new Todo(todoId, updatedTask)
-      this.todos[todoIndex] = updatedTodo
+      const [result] = await pool.query<ResultSetHeader>(
+        'UPDATE todos SET task = ? WHERE id = ?',
+        [updatedTask, todoId]
+      )
 
-      res.status(201).json({
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Could not find todo with such id' })
+      }
+
+      res.status(200).json({
         message: 'Todo is updated!',
-        updatedTask: updatedTodo
+        updatedTask: {
+          id: Number(todoId),
+          task: updatedTask
+        }
       })
     } catch (error) {
-      console.log(error)
+      console.error(error)
+      res.status(500).json({ message: 'Andmebaasi viga ülesande uuendamisel' })
     }
   }
 
-  deleteTodo = (req: Request, res: Response, next: NextFunction) => {
+  // 5. Ühe ülesande kustutamine
+  deleteTodo = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const todoId = req.params.id as string
-      const todoIndex = this.todos.findIndex(todo => todo.id === todoId)
+      const todoId = req.params.id
+      const [result] = await pool.query<ResultSetHeader>(
+        'DELETE FROM todos WHERE id = ?',
+        [todoId]
+      )
 
-      if (todoIndex < 0) {
-        throw new Error('Could not find todo with such id')
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: 'Could not find todo with such id' })
       }
 
-      this.todos.splice(todoIndex, 1)
-
-      res.status(201).json({
+      res.status(200).json({
         message: 'Todo is deleted!'
       })
     } catch (error) {
-      console.log(error)
+      console.error(error)
+      res.status(500).json({ message: 'Andmebaasi viga ülesande kustutamisel' })
+    }
+  }
+
+  // 6. Kõikide ülesannete kustutamine (Iseseisev töö)
+  deleteAllTodos = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await pool.query('DELETE FROM todos')
+      res.status(200).json({
+        message: 'All todos are deleted!',
+        todos: []
+      })
+    } catch (error) {
+      console.error(error)
+      res.status(500).json({ message: 'Andmebaasi viga kõikide ülesannete kustutamisel' })
     }
   }
 }
